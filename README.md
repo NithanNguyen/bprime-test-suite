@@ -25,6 +25,7 @@ PC (Ubuntu 22.04.5 · RTX 3060 12 GB · driver 580 · Docker + NVIDIA Container 
       → Foxy ↔ Foxy, không có cầu chéo phiên bản · không cần dual-boot
 
 Vận hành:  ./bprime.sh isaac base|t6   ⇄   ./bprime.sh foxy base|t6
+Xem cảnh:  thêm --livestream → Chrome http://127.0.0.1:8211/streaming/webrtc-client?server=127.0.0.1
 Trạng thái: laptop (host 20.04) PASS T0–T6 · PC (host 22.04, driver 580) chờ chạy kiểm chứng
 ```
 
@@ -35,7 +36,7 @@ Trạng thái: laptop (host 20.04) PASS T0–T6 · PC (host 22.04, driver 580) c
 | Image 4.1 có tải được và có thư viện Foxy nội bộ không | Hiệu năng của cảnh lớn, ví dụ GRScenes |
 | Tiến trình Isaac nạp **đúng** backend Foxy, không ngầm chuyển sang Humble | Nav2, slam_toolbox (sẽ là bước tích hợp sau) |
 | DDS giữa hai container theo cả hai chiều | Mô hình robot thật của đề tài (bộ test dùng Jetbot thay thế) |
-| `/clock`, `/cmd_vel`, camera RGB + `camera_info` | Livestream / giao diện đồ họa (GUI) |
+| `/clock`, `/cmd_vel`, camera RGB + `camera_info` | Hiệu năng và độ đúng khi bật livestream (`--livestream` chỉ để **xem**, mục 4.5) |
 | RTX LiDAR RPLIDAR S2E → `/scan`, `/point_cloud` | Phần cứng thật (Jetson, LiDAR thật) |
 | Robot vi sai: `/cmd_vel` → chuyển động → `/odom`, `/tf` | |
 
@@ -60,6 +61,7 @@ bprime-test-suite/
 ├── isaac/                  Chạy bên trong container Isaac Sim
 │   ├── env.sh              Thêm thư viện Foxy nội bộ vào LD_LIBRARY_PATH (một lần)
 │   ├── inspect.sh          T2: kiểm tra nội dung image
+│   ├── bprime_app.py       Khởi động Kit: headless (mặc định) hoặc headless + livestream WebRTC
 │   ├── test_base.py        Graph /clock, /cmd_vel, camera; kiểm tra backend
 │   └── test_t6.py          Cảnh Jetbot + RTX LiDAR + odom/TF
 └── foxy/                   Chạy bên trong container Foxy
@@ -115,9 +117,41 @@ Cần mở hai terminal, cùng ở thư mục bộ test. Bên Foxy **tự chờ*
 
 | Lệnh | Tùy chọn |
 |---|---|
-| `isaac base` | `--duration S` (mặc định 300), `--no-camera`, `--no-assets` |
-| `isaac t6` | `--duration S` (mặc định 300), `--lidar-config NAME` (mặc định `RPLIDAR_S2E`), `--no-pointcloud` |
+| `isaac base` | `--duration S` (mặc định 300), `--no-camera`, `--no-assets`, `--livestream` |
+| `isaac t6` | `--duration S` (mặc định 300), `--lidar-config NAME` (mặc định `RPLIDAR_S2E`), `--no-pointcloud`, `--livestream` |
+| `isaac stream` | Không có tùy chọn. Mở app Isaac Sim đầy đủ (stage trống) qua `runheadless.webrtc.sh` |
 | `shell isaac` / `shell foxy` | Mở shell tương tác trong container, môi trường đã được thiết lập sẵn |
+
+### 4.5 Xem mô phỏng bằng livestream (WebRTC)
+
+Container Isaac Sim chỉ chạy headless; cách xem được NVIDIA hỗ trợ là livestream. Vì container dùng `--network=host`, cổng 8211 mở thẳng trên máy chạy test, không cần mở port thêm.
+
+1. Cài Chrome hoặc Chromium trên máy xem (tài liệu NVIDIA khuyến nghị; WebRTC có thể không chạy với Firefox):
+   `sudo snap install chromium`
+2. Terminal A, **trên host** (dấu nhắc `user@máy:~/bprime-test-suite$`, không phải `root@...:/isaac-sim#`):
+
+   | Muốn xem | Lệnh |
+   |---|---|
+   | Cảnh T6 (Jetbot + LiDAR) | `./bprime.sh isaac t6 --livestream --duration 1800` |
+   | Cảnh base (camera, /clock) | `./bprime.sh isaac base --livestream --duration 1800` |
+   | App trống, để thử stream | `./bprime.sh isaac stream` |
+
+3. Khi log in `simulation playing` (hoặc app nạp xong với `isaac stream`), mở trong Chrome:
+   `http://127.0.0.1:8211/streaming/webrtc-client?server=127.0.0.1` rồi bấm **nút Play đỏ**.
+   Xem từ máy khác trong LAN: thay `127.0.0.1` bằng IP của máy chạy Isaac (chưa kiểm chứng).
+4. Terminal B: `./bprime.sh foxy t6` để robot chạy thẳng rồi quay tại chỗ. Hoặc lái tay từ host:
+   ```bash
+   source /opt/ros/foxy/setup.bash
+   export ROS_DOMAIN_ID=42
+   export FASTRTPS_DEFAULT_PROFILES_FILE=~/bprime-test-suite/config/fastdds_udp.xml   # cùng transport UDP với container
+   ros2 run teleop_twist_keyboard teleop_twist_keyboard
+   ```
+
+Lưu ý:
+- **Chỉ dùng để xem.** Render UI và mã hóa video làm mô phỏng chậm hơn: trên laptop RTX 3050 4 GB, tỉ lệ thời gian thực giảm từ 0,47–0,59 xuống khoảng 0,39 (mục 6). Lần chạy dùng để kết luận PASS/FAIL hoặc đo hiệu năng phải chạy **không** có `--livestream`.
+- Mỗi instance chỉ phục vụ **một** người xem; tab thứ hai sẽ báo lỗi.
+- Viewport mặc định là camera **Perspective** nhìn chéo nên lưới sàn trông như hình thoi và đường thẳng có thể trông xiên. Chọn **Perspective → Top** để nhìn từ trên xuống, không còn phối cảnh.
+- Cấu hình livestream (`isaac/bprime_app.py`) chép từ ví dụ có sẵn trong image `/isaac-sim/standalone_examples/api/omni.isaac.kit/livestream.py`, chỉ đổi sang extension WebRTC `omni.services.streamclient.webrtc` và cửa sổ 1280×720 để tiết kiệm VRAM.
 
 ## 5. Danh mục test và tiêu chí đạt
 
@@ -140,7 +174,7 @@ Cần mở hai terminal, cùng ở thư mục bộ test. Bên Foxy **tự chờ*
 | T6f | LiDAR so với odom (tham khảo) | `31_foxy_t6.log` | Khoảng cách tới tường phía trước giảm ≈ quãng đường odom |
 
 Ghi chú về cách đo:
-- T6d và T6e tính thời gian theo `/clock`, nên kết quả không phụ thuộc máy mô phỏng nhanh hay chậm.
+- T6d và T6e tính thời gian theo `/clock`, nên kết quả không phụ thuộc máy mô phỏng nhanh hay chậm. Lệnh được phát trong 6 s **thời gian thực**, nhưng giá trị kỳ vọng tính theo thời gian **mô phỏng** đã trôi: ví dụ ω = 0,5 rad/s × `sim_time_active` 2,33 s = 1,165 rad ≈ 66,8°, không phải 0,5 × 6 = 172°.
 - `/odom` trong bộ test là vị trí thật của chassis trong mô phỏng (node `IsaacComputeOdometry`), không phải odometry tính từ encoder. Vì vậy T6d và T6e kiểm tra cả đường đi của lệnh: Foxy → bridge → bộ điều khiển vi sai → mô phỏng vật lý → `/odom` → Foxy.
 
 **Cách kết luận cho một máy:**
@@ -162,6 +196,7 @@ Kết quả trên laptop i7-12700H, RTX 3050 Laptop 4 GB, Ubuntu 20.04, driver 5
 | T6d / T6e | Tỉ số 1,12 / 1,03 |
 | T6f | Khoảng cách tới tường trước giảm 0,488 m; odom ghi nhận 0,485 m |
 | Hiệu năng | Khoảng 28–35 bước/s, tức mô phỏng chạy bằng **0,47–0,59 lần thời gian thực**. Các node ROS bắt buộc đặt `use_sim_time:=true` |
+| T6 có `--livestream` (cùng ngày) | T6a–T6e vẫn PASS: 89% tia hợp lệ; T6d 0,395 m / 0,353 m (tỉ số 1,12); T6e 69,2° / 66,8° (tỉ số 1,03). Mô phỏng chậm còn **≈ 0,39 lần thời gian thực** (2,35 s mô phỏng trong 6 s thực). Mới có một lần chạy |
 
 ## 7. Hạn chế đã biết
 
@@ -169,6 +204,7 @@ Kết quả trên laptop i7-12700H, RTX 3050 Laptop 4 GB, Ubuntu 20.04, driver 5
 - **Có điểm đo ở khoảng 0,08 m,** nhiều khả năng LiDAR quét trúng thân robot (chưa kiểm chứng). Với robot thật, cần tăng `range_min` hoặc lọc các tia này.
 - **Jetbot tự quay khoảng −1° mỗi 10 s** khi lệnh bằng 0. Hiện tượng này gắn với mô hình Jetbot, không phải lỗi của bridge.
 - **Cấu hình LiDAR `SICK_microscan3_*`** (máy quét an toàn 275°) cho `angle_increment` sai dấu và gần như không có tia hợp lệ. Không dùng cấu hình này cho đề tài.
+- **`--livestream` làm chậm mô phỏng** (mục 4.5, mục 6). Ngoài một lần chạy T6 ở mục 6, chưa kiểm chứng độ đúng của các test khác khi bật livestream.
 - **Chiều quét:** S2E thật quay theo chiều kim đồng hồ, còn ROS quy ước ngược lại. Scan mô phỏng đã theo đúng quy ước ROS (REP 103). Khi có LiDAR thật, cần đối chiếu với driver `rplidar_ros`.
 
 ## 8. Xử lý sự cố
@@ -178,6 +214,10 @@ Mỗi lần chỉ thay đổi một thứ, rồi chạy lại.
 | Triệu chứng | Kiểm tra / cách sửa |
 |---|---|
 | `docker: permission denied` | Chưa đăng xuất/đăng nhập lại sau `install-docker` |
+| `bash: ./bprime.sh: No such file or directory`, hoặc `bprime.sh must run on the host` | Bạn đang ở trong shell của container (`root@...:/isaac-sim#`). Gõ `exit` rồi chạy lại trên host |
+| `python3: can't open file '/bprime/foxy/check_t6.py'` | Container `bprime-foxy` cũ còn mount một bản suite cũ (thư mục khác, hoặc đã xóa rồi clone lại). Bản `bprime.sh` hiện tại tự tạo lại container; với bản cũ, chạy `docker rm -f bprime-foxy` (không dùng `stop`, vì `stop` tắt luôn Isaac) |
+| Chrome không vào được trang livestream | `ss -ltnp \| grep 8211` trên host. Không có dòng nào: extension chưa chạy, tìm `streamclient.webrtc` trong log terminal A. Có dòng: thử Chromium, tắt extension chặn quảng cáo, đóng tab xem khác |
+| Livestream màn hình đen | Lần đầu có thể đang biên dịch shader; chờ 1–2 phút |
 | `pull` báo `unauthorized` | `docker login nvcr.io`: username là `$oauthtoken`, password là NGC API key |
 | `container bprime-isaac already exists` | Còn một test Isaac đang chạy hoặc bị treo → `./bprime.sh stop` |
 | Bên Foxy chờ hết 300 s mà không thấy gì | (a) Terminal A đã in `simulation playing` chưa? (b) Cả hai bên đều phải in `ROS_DOMAIN_ID=42`. (c) `ip -br addr` phải có card mạng đang UP ngoài `lo` |
@@ -199,6 +239,7 @@ Bộ test không cài và không sửa ROS/Gazebo trên host. Gỡ Docker và NV
 ## 10. Tài liệu tham khảo
 
 - Isaac Sim 4.1 – [ROS and ROS 2 Installation](https://docs.isaacsim.omniverse.nvidia.com/4.1.0/installation/install_ros.html): thư viện Foxy nội bộ, `LD_LIBRARY_PATH`, profile Fast DDS
+- Isaac Sim 4.2 – [Livestream Clients](https://docs.isaacsim.omniverse.nvidia.com/4.2.0/installation/manual_livestream_clients.html): URL WebRTC, khuyến nghị Chrome, mỗi instance một client
 - Isaac Sim 4.2 – [Container Installation](https://docs.isaacsim.omniverse.nvidia.com/4.2.0/installation/install_container.html), [ROS 2 RTX Lidar](https://docs.isaacsim.omniverse.nvidia.com/4.2.0/ros2_tutorials/tutorial_ros2_rtx_lidar.html), [ROS 2 TF & Odometry](https://docs.isaacsim.omniverse.nvidia.com/4.2.0/ros2_tutorials/tutorial_ros2_tf.html), [Adding a Controller (Jetbot)](https://docs.isaacsim.omniverse.nvidia.com/4.2.0/core_api_tutorials/tutorial_core_adding_controller.html)
 - [Docker Engine – Install on Ubuntu](https://docs.docker.com/engine/install/ubuntu/) · [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 - [SLAMTEC RPLIDAR S2E datasheet v1.8](https://stgaws.robu.in/wp-content/uploads/2023/03/SLAMTEC_rplidar_datasheet_S2E_v1.8_en.pdf) · [REP 103](https://www.ros.org/reps/rep-0103.html)

@@ -1,7 +1,7 @@
 """
 B' bridge test for Isaac Sim 4.1 (headless) with the ROS 2 Foxy internal libraries.
 
-Started from the host with:   ./bprime.sh isaac base [--duration S] [--no-camera] [--no-assets]
+Started from the host with:   ./bprime.sh isaac base [--duration S] [--no-camera] [--no-assets] [--livestream]
 (bprime.sh sources /bprime/isaac/env.sh in the container and runs this file with /isaac-sim/python.sh).
 
 Sub-tests (each isolated, each prints a PASS/FAIL line tagged [B']):
@@ -35,6 +35,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--duration", type=float, default=300.0, help="wall-clock seconds to run")
 parser.add_argument("--no-camera", action="store_true", help="skip the camera publisher sub-test")
 parser.add_argument("--no-assets", action="store_true", help="skip the cloud asset reachability check")
+parser.add_argument("--livestream", action="store_true",
+                    help="stream the viewport via WebRTC on port 8211 (viewing only)")
 args, _unknown = parser.parse_known_args()
 
 TAG = "[B']"
@@ -52,13 +54,11 @@ ldp = os.environ.get("LD_LIBRARY_PATH", "")
 if "omni.isaac.ros2_bridge/foxy/lib" not in ldp:
     log("WARNING: Foxy internal lib dir is not in LD_LIBRARY_PATH. Start this test with ./bprime.sh isaac base")
 
-# ---------------------------------------------------------------- start Kit headless
-try:
-    from isaacsim import SimulationApp  # recommended import in 4.1 (avoids the deprecation warning)
-except ImportError:  # pragma: no cover
-    from omni.isaac.kit import SimulationApp
+# ---------------------------------------------------------------- start Kit (headless, optional livestream)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from bprime_app import start_app  # noqa: E402
 
-simulation_app = SimulationApp({"headless": True})
+simulation_app = start_app(livestream=args.livestream, log=log)
 
 from omni.isaac.core.utils.extensions import enable_extension  # noqa: E402
 

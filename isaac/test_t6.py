@@ -2,7 +2,7 @@
 B' test T6 for Isaac Sim 4.1 (headless, ROS 2 Foxy internal libraries):
 2D RTX lidar -> /scan, differential-drive robot driven by /cmd_vel, /odom and /tf.
 
-Started from the host with:   ./bprime.sh isaac t6 [--duration S] [--lidar-config NAME] [--no-pointcloud]
+Started from the host with:   ./bprime.sh isaac t6 [--duration S] [--lidar-config NAME] [--no-pointcloud] [--livestream]
 Then, in a second terminal:    ./bprime.sh foxy t6     (and optionally ./bprime.sh foxy scan)
 
 Scene: ground plane, a closed 4 m x 4 m box of walls (inner faces at +-2.0 m), one pillar,
@@ -56,37 +56,13 @@ for k in ("ROS_DISTRO", "ROS_DOMAIN_ID", "RMW_IMPLEMENTATION", "FASTRTPS_DEFAULT
 if "omni.isaac.ros2_bridge/foxy/lib" not in os.environ.get("LD_LIBRARY_PATH", ""):
     log("WARNING: Foxy internal lib dir is not in LD_LIBRARY_PATH. Start this test with ./bprime.sh isaac t6")
 
-# ---------------------------------------------------------------- start Kit headless
-try:
-    from isaacsim import SimulationApp  # recommended import in 4.1 (avoids the deprecation warning)
-except ImportError:  # pragma: no cover
-    from omni.isaac.kit import SimulationApp
+# ---------------------------------------------------------------- start Kit (headless, optional livestream)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from bprime_app import start_app  # noqa: E402
 
-# simulation_app = SimulationApp({"headless": True})
-
-# from omni.isaac.core.utils.extensions import enable_extension  # noqa: E402
-
-if args.livestream:
-    # Config copied from /isaac-sim/standalone_examples/api/omni.isaac.kit/livestream.py (Isaac Sim 4.1)
-    simulation_app = SimulationApp({
-        "width": 1280, "height": 720,
-        "window_width": 1280, "window_height": 720,   # ví dụ gốc dùng 1920x1080; giảm để tiết kiệm VRAM 4 GB
-        "headless": True,
-        "hide_ui": False,
-        "renderer": "RayTracedLighting",
-        "display_options": 3286,
-    })
-else:
-    simulation_app = SimulationApp({"headless": True})
+simulation_app = start_app(livestream=args.livestream, log=log)
 
 from omni.isaac.core.utils.extensions import enable_extension  # noqa: E402
-
-if args.livestream:
-    simulation_app.set_setting("/app/window/drawMouse", True)
-    simulation_app.set_setting("/app/livestream/proto", "ws")
-    simulation_app.set_setting("/ngx/enabled", False)
-    enable_extension("omni.services.streamclient.webrtc")   # chỉ bật MỘT extension livestream
-    log("LIVESTREAM: http://127.0.0.1:8211/streaming/webrtc-client?server=127.0.0.1")
 
 for ext in ("omni.isaac.ros2_bridge", "omni.isaac.sensor", "omni.isaac.wheeled_robots"):
     try:

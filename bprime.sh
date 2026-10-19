@@ -5,10 +5,17 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# bprime.sh drives Docker, so it must run on the HOST, never inside a test container.
+if [ -f /.dockerenv ] || [ -d /isaac-sim ]; then
+  printf '\033[31mERROR:\033[0m bprime.sh must run on the host, not inside a container.\n' >&2
+  printf 'You are in a container shell (prompt root@...:/isaac-sim#). Type "exit", then rerun the command.\n' >&2
+  exit 1
+fi
 # shellcheck source=config/bprime.env
 source "${HERE}/config/bprime.env"
 mkdir -p "${BPRIME_LOG_DIR}"
 DDS_PROFILE_IN_CONTAINER="/bprime/config/fastdds_udp.xml"
+STREAM_URL="http://127.0.0.1:8211/streaming/webrtc-client?server=127.0.0.1"
 
 say()  { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 die()  { printf '\033[31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -32,8 +39,12 @@ Tests (terminal A = Isaac side, terminal B = Foxy side)
   isaac base [opts]      A: BACKEND/GRAPH/CAMERA/ASSETS + /clock, /cmd_vel   (opts: --duration S --no-camera --no-assets)
   foxy  base             B: T3 /clock, T4 /cmd_vel, T5 camera
   isaac t6   [opts]      A: Jetbot + RTX lidar + /odom, /tf                  (opts: --duration S --lidar-config NAME --no-pointcloud)
+                         Both isaac base/t6 accept --livestream: view the scene in Chrome (WebRTC, port 8211)
   foxy  t6               B: T6a-T6f scan / odom / tf / motion checks
   foxy  scan             B: /scan vs /point_cloud diagnosis (optional)
+
+Viewing (WebRTC livestream, open http://127.0.0.1:8211/streaming/webrtc-client?server=127.0.0.1)
+  isaac stream           A: full Isaac Sim app (empty stage) streamed via runheadless.webrtc.sh
 
 Utilities
   shell isaac|foxy       Interactive shell in a container (environment already set)
@@ -155,9 +166,20 @@ ensure_no_isaac() {
   fi
 }
 
+foxy_mount_src() {
+  docker inspect -f '{{range .Mounts}}{{if eq .Destination "/bprime"}}{{.Source}}{{end}}{{end}}' "${FOXY_CONTAINER}" 2>/dev/null
+}
+
 ensure_foxy() {
   need_docker
-  if running "${FOXY_CONTAINER}"; then return 0; fi
+  if running "${FOXY_CONTAINER}"; then
+    # Reuse the long-lived Foxy container only if it mounts THIS suite folder. A container started
+    # from an older copy of the suite (other path, or a folder deleted and re-cloned) sees stale files.
+    if [ "$(foxy_mount_src)" = "${HERE}" ] && docker exec "${FOXY_CONTAINER}" test -f /bprime/foxy/check_t6.py; then
+      return 0
+    fi
+    echo "Foxy container mounts '$(foxy_mount_src)' (stale or not '${HERE}') -> recreating it."
+  fi
   exists "${FOXY_CONTAINER}" && docker rm -f "${FOXY_CONTAINER}" >/dev/null
   docker run -d --name "${FOXY_CONTAINER}" --rm --network=host \
     -e "ROS_DOMAIN_ID=${BPRIME_DOMAIN_ID}" -e RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
@@ -178,13 +200,26 @@ cmd_isaac() {
   case "${which}" in
     base) script=/bprime/isaac/test_base.py; log=20_isaac_base.log ;;
     t6)   script=/bprime/isaac/test_t6.py;   log=30_isaac_t6.log ;;
-    *) die "usage: ./bprime.sh isaac base|t6 [options]" ;;
+    stream) cmd_isaac_stream; return ;;
+    *) die "usage: ./bprime.sh isaac base|t6|stream [options]" ;;
   esac
   need_docker; ensure_no_isaac; isaac_run_args
+  if [[ " $* " == *" --livestream "* ]]; then
+    echo "Livestream on: when the log shows 'simulation playing', open in Chrome/Chromium:"
+    echo "  ${STREAM_URL}   (press the red Play button; one viewer at a time)"
+  fi
   say "Isaac side '${which}' (log: ${BPRIME_LOG_DIR}/${log}). First start compiles shaders and can take minutes. Ctrl+C to stop."
   docker run -it "${ISAAC_ARGS[@]}" "${ISAAC_IMAGE}" -c \
     'source /bprime/isaac/env.sh && cd /isaac-sim && ./python.sh "$0" "$@" 2>&1 | tee "/bprime_logs/'"${log}"'"' \
     "${script}" "$@"
+}
+
+cmd_isaac_stream() {
+  need_docker; ensure_no_isaac; isaac_run_args
+  say "Isaac Sim app streamed via WebRTC (log: ${BPRIME_LOG_DIR}/40_isaac_stream.log). Ctrl+C or File > Exit to stop."
+  echo "When loading has finished, open in Chrome/Chromium: ${STREAM_URL}"
+  docker run -it "${ISAAC_ARGS[@]}" "${ISAAC_IMAGE}" -c \
+    'source /bprime/isaac/env.sh && cd /isaac-sim && ./runheadless.webrtc.sh 2>&1 | tee /bprime_logs/40_isaac_stream.log'
 }
 
 cmd_foxy() {
