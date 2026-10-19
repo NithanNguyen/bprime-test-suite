@@ -274,7 +274,7 @@ T7 trả lời câu hỏi: **chuỗi B′ đã PASS T0–T6 có còn chạy đư
 ### 11.2 Lộ trình
 
 ```
-Bước 1  Office (Isaac 4.1)      ./bprime.sh isaac t7 --scene office          → kiểm tra script T7, không cần tải gì
+Bước 1  Office (Isaac 4.1)      ./bprime.sh isaac t7 --scene office --add-colliders --floor-z 0   → kiểm tra script T7, không cần tải gì
 Bước 2  Tải GRScenes-100 home   (mục 11.3, ~51 GB nén)
 Bước 3  Thống kê 69 cảnh        ./bprime.sh grscenes-inventory               → chọn 3–4 cảnh ứng viên
 Bước 4  T7 cho từng ứng viên    ./bprime.sh isaac t7 --scene <ID>            → giữ 2 cảnh PASS
@@ -315,7 +315,9 @@ Bước 5  (chỉ khi bước 4 lỗi)    --hide-hdr, --add-dome-light, grscenes
 
 ```bash
 # Bước 1 - Office (không cần GRScenes)
-./bprime.sh isaac t7 --scene office                 # terminal A
+./bprime.sh isaac t7 --scene office --add-colliders --floor-z 0 --duration 180   # terminal A
+#   office.usd chỉ có 1 collider (/Root/GroundPlane/CollisionPlane) -> cần --add-colliders;
+#   có bề mặt ở z = -3,3 m dưới sàn thật (z = 0) -> cần --floor-z 0 (xem 11.6)
 ./bprime.sh foxy t7                                 # terminal B
 
 # Bước 3 - thống kê để chọn cảnh (chỉ đọc USD, không mô phỏng)
@@ -351,7 +353,26 @@ Bước 5  (chỉ khi bước 4 lỗi)    --hide-hdr, --add-dome-light, grscenes
 | T7a FAIL hoặc lỗi vật lý với file navigation có sẵn | `./bprime.sh grscenes-prep <ID>`: tạo lại `start_result_navigation.usd` bằng Isaac Sim 4.1 với `preprocess.py -n` của InternUtopia. Bản gốc được giữ là `start_result_navigation.shipped.usd`. Cần clone InternUtopia vào `INTERNUTOPIA_DIR`. File mới thuộc user `root` |
 | T7d WARN/FAIL (gần hết VRAM) | `--cam-res 424x240`, `--no-camera` để khoanh vùng; tắt ứng dụng dùng GPU khác |
 
-### 11.6 Ghi chú kỹ thuật
+### 11.6 Kết quả đã đo: Office trên laptop (RTX 3050 Laptop 4 GB, 2026-10-19)
+
+Lệnh: `./bprime.sh isaac t7 --scene office --add-colliders --floor-z 0 --duration 180`.
+
+| Mục | Kết quả |
+|---|---|
+| T7a LOAD | PASS, 488,7 s lần đầu (tải asset qua HTTP), 16–47 s các lần sau |
+| SPAWN | PASS tại (0,30; 17,30), sàn z = 0; 6136/17127 ô hợp lệ |
+| T7b STABLE | PASS, thân xe z = 0,041 m, trôi ngang 0,002 m |
+| T7c SCAN / TF | PASS, 86 % tia hợp lệ / đủ odom→base_link→lidar_link |
+| T7g CAMERA | PASS, 640×480, 9,2 Hz wall, độ sáng TB 39 |
+| T7h ROTATE / FORWARD | PASS, tỉ số 1,01 / 1,13 |
+| T7d VRAM | PASS, đỉnh 2821 MiB / 4096 MiB (69 %) |
+| T7e RTF | 0,24 (T6 trên cùng laptop: 0,47–0,59) |
+
+Hai lần chạy trước đó cho bài học cho cảnh không phải GRScenes:
+- Không có `--add-colliders`: `SPAWN FAIL` (chỉ có 1 collider dạng Plane), không có robot nên phía Foxy chỉ thấy `/clock`.
+- Có `--add-colliders` nhưng không có `--floor-z`: bộ tìm chọn bề mặt z = -3,3 m dưới sàn thật, PhysX đẩy robot ra ~17 m; T7h ROTATE tỉ số 0,24. T7b nay kiểm tra cả độ trôi ngang để bắt lỗi này.
+
+### 11.7 Ghi chú kỹ thuật
 
 - **Mở cảnh:** `open_stage()` của `omni.isaac.core`, giống `play_scene.py` của InternUtopia. Script dùng physics scene có sẵn trong file (GRScenes: `/Root/physicsScene`) và tắt UJITSO collision cooking như các script GRScenes.
 - **Tìm điểm spawn** (`common/t7_lib.py`): lưới 0,5 m trên hộp bao của cảnh. Một ô hợp lệ khi tia xuống chạm đúng mặt sàn (độ cao phổ biến nhất), tia lên chạm trần trong khoảng 1,5–5 m (trong nhà, không nằm dưới bàn/giường), và 32 tia ngang ở 0,10 m và 0,40 m không chạm vật nào trong 0,35 m. Chọn ô có nhiều ô lân cận hợp lệ nhất. Thuật toán đã test trên một ngôi nhà tổng hợp (`python3 common/test_t7_lib.py`), **chưa** test trong Isaac Sim.
@@ -359,7 +380,7 @@ Bước 5  (chỉ khi bước 4 lỗi)    --hide-hdr, --add-dome-light, grscenes
 - **Danh sách vật thể:** prim có thuộc tính `semantic:*:params:semanticData`; chỉ giữ prim cao nhất mang nhãn đó. Ở GRScenes nhãn có dạng `<loại>/<model>`, do `preprocess.py` gán.
 - **Diện tích sàn** trong inventory: hợp (union) các mặt nằm ngang của mesh loại `ground`/`floor`, raster lưới 0,1 m. Đây là ước lượng, có thể gồm cả ban công/sân nếu cảnh có.
 
-### 11.7 Tài liệu tham khảo cho T7
+### 11.8 Tài liệu tham khảo cho T7
 
 - GRScenes dataset card (cấu trúc thư mục, 3 file USD mỗi cảnh, `MDL_SYSTEM_PATH`, giấy phép): https://huggingface.co/datasets/InternRobotics/GRScenes
 - InternUtopia README (User Agreement, nơi tải) và `toolkits/grscenes_scripts/{preprocess,play_scene,warmup}.py`: https://github.com/InternRobotics/InternUtopia
