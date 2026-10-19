@@ -46,6 +46,12 @@ parser.add_argument("--add-dome-light", action="store_true", help="add a dome li
 parser.add_argument("--add-colliders", action="store_true",
                     help="add static triangle-mesh colliders to every scene mesh that has none")
 parser.add_argument("--ground-plane", action="store_true", help="add a ground plane at --floor-z (default 0)")
+parser.add_argument("--search-region", type=float, nargs=4, metavar=("XMIN", "YMIN", "XMAX", "YMAX"),
+                    help="spawn search area in metres (default: bbox of the meshes no larger than --max-object-size)")
+parser.add_argument("--max-object-size", type=float, default=50.0,
+                    help="meshes wider than this [m] (backdrops, terrain, sky) are left out of the search bbox")
+parser.add_argument("--max-cells", type=int, default=300000,
+                    help="refuse a spawn search with more 0.5 m cells than this (use --search-region)")
 parser.add_argument("--livestream", action="store_true", help="WebRTC livestream on port 8211 (viewing only)")
 args, _unknown = parser.parse_known_args()
 
@@ -267,6 +273,38 @@ bb_min, bb_max = tuple(scene_rng.GetMin()), tuple(scene_rng.GetMax())
 log("scene bbox [m]: min=({:.2f}, {:.2f}, {:.2f}) max=({:.2f}, {:.2f}, {:.2f})".format(
     *[v * mpu for v in bb_min + bb_max]))
 
+# Search bbox: union of the meshes no wider than --max-object-size. One backdrop, terrain or sky mesh
+# can make the whole-scene bbox hundreds of metres wide and put its bottom far below the floor
+# (seen with Office: x span ~1 km, zmin -86 m), which breaks the floor probe of the spawn search.
+core_lo, core_hi, big = None, None, []
+for p in stage.Traverse():
+    if not p.IsA(UsdGeom.Mesh):
+        continue
+    r = bbox_cache.ComputeWorldBound(p).ComputeAlignedRange()
+    if r.IsEmpty():
+        continue
+    lo, hi = np.array(r.GetMin(), dtype=float), np.array(r.GetMax(), dtype=float)
+    span = float(max(hi[0] - lo[0], hi[1] - lo[1])) * mpu
+    if span > args.max_object_size:
+        big.append((span, str(p.GetPath()), lo * mpu, hi * mpu))
+        continue
+    core_lo = lo if core_lo is None else np.minimum(core_lo, lo)
+    core_hi = hi if core_hi is None else np.maximum(core_hi, hi)
+big.sort(reverse=True)
+for span, path, lo, hi in big[:5]:
+    log(f"     left out of search bbox (wider than {args.max_object_size:.0f} m): {path} span={span:.1f} m "
+        f"z=[{lo[2]:.2f}, {hi[2]:.2f}]")
+if len(big) > 5:
+    log(f"     ... and {len(big) - 5} more")
+if core_lo is not None:
+    bb_min, bb_max = tuple(float(v) for v in core_lo), tuple(float(v) for v in core_hi)
+if args.search_region:
+    x0, y0, x1, y1 = (v * S for v in args.search_region)
+    bb_min = (min(x0, x1), min(y0, y1), bb_min[2])
+    bb_max = (max(x0, x1), max(y0, y1), bb_max[2])
+log("search bbox [m]: min=({:.2f}, {:.2f}, {:.2f}) max=({:.2f}, {:.2f}, {:.2f}){}".format(
+    *[v * mpu for v in bb_min + bb_max], " (--search-region)" if args.search_region else ""))
+
 if args.add_colliders:
     added = 0
     for p in stage.Traverse():
@@ -322,7 +360,12 @@ try:
         spawn = {"x": x, "y": y, "floor_z": fz, "neighbours": "n/a", "clearance": float("nan")}
         log("SPAWN (given): x={:.2f} y={:.2f} floor_z={:.3f} m".format(x * mpu, y * mpu, fz * mpu))
     else:
-        spawn, diag = find_spawn(raycast, bb_min, bb_max, m2u=S, log=log)
+        n_cells = int((bb_max[0] - bb_min[0]) * mpu / 0.5 + 1) * int((bb_max[1] - bb_min[1]) * mpu / 0.5 + 1)
+        if n_cells > args.max_cells:
+            raise RuntimeError(f"search area has ~{n_cells} cells (> --max-cells {args.max_cells}); "
+                               "narrow it with --search-region XMIN YMIN XMAX YMAX")
+        fz_hint = args.floor_z * S if args.floor_z is not None else None
+        spawn, diag = find_spawn(raycast, bb_min, bb_max, m2u=S, floor_z=fz_hint, log=log)
         if spawn is None:
             log(f"SPAWN FAIL: {diag.get('reason')} {diag}")
             log("     give a position with --spawn X Y [--floor-z Z], or add --add-colliders / --ground-plane")
@@ -388,6 +431,8 @@ if spawn is not None:
         robot = None
 else:
     log("ROBOT SKIPPED (no spawn). The scene keeps running so you can inspect it with --livestream.")
+    log("     without a robot there is no /scan, /odom, /tf or camera: ./bprime.sh foxy t7 will only wait."
+        " Stop both sides (Ctrl+C) and fix SPAWN first.")
 
 # ---------------------------------------------------------------- BASE graph
 base_ok = False

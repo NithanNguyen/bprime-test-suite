@@ -75,6 +75,14 @@ def main():
     res2, diag2 = find_spawn(make_raycast([]), (0, 0, 0), (5, 5, 3))
     ok &= check("no colliders -> None with reason", res2 is None and "no collider" in diag2.get("reason", ""))
 
+    # bbox bottom far below the floor (Office case: zmin -86 m): the floor probe misses,
+    # a given floor_z fixes it
+    res3, diag3 = find_spawn(rc, (-0.1, -0.1, -86.0), (14, 8.1, 2.8))
+    ok &= check("deep bbox -> probe misses", res3 is None and "no collider" in diag3.get("reason", ""))
+    res4, diag4 = find_spawn(rc, (-0.1, -0.1, -86.0), (14, 8.1, 2.8), floor_z=0.0)
+    ok &= check("deep bbox + floor_z -> spawn indoors",
+                res4 is not None and 0 < res4["x"] < 10 and 0 < res4["y"] < 8, str(diag4))
+
     # floor area: 4 m x 5 m slab, top and bottom faces both listed -> counted once
     sq = [(0, 0, 4, 0, 4, 5), (0, 0, 4, 5, 0, 5)]
     area = floor_area_xy(sq + sq, cell=0.1)

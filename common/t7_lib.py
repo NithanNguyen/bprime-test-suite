@@ -30,7 +30,7 @@ def _horizontal_dirs(n):
 
 def find_spawn(raycast, bbox_min, bbox_max, m2u=1.0, step_m=0.5, margin_m=0.3,
                probe_h_m=1.0, clearance_m=0.35, headroom_m=1.5, ceiling_max_m=5.0,
-               floor_tol_m=0.03, ray_heights_m=(0.10, 0.40), n_dirs=16, log=None):
+               floor_tol_m=0.03, ray_heights_m=(0.10, 0.40), n_dirs=16, floor_z=None, log=None):
     """Return the best spawn cell or None.
 
     raycast(origin, direction, max_dist) -> hit distance (float) or None. Coordinates are in
@@ -63,21 +63,23 @@ def find_spawn(raycast, bbox_min, bbox_max, m2u=1.0, step_m=0.5, margin_m=0.3,
         diag["reason"] = "bounding box smaller than the search margin"
         return None, diag
 
-    # pass 1: most common horizontal surface height = floor
+    # pass 1: most common horizontal surface height = floor (skipped when the caller gives floor_z)
     down = (0.0, 0.0, -1.0)
-    z0 = zmin + probe_h_m * s
-    heights = []
-    for x in xs:
-        for y in ys:
-            d = raycast((x, y, z0), down, 2.0 * probe_h_m * s)
-            if d is not None:
-                heights.append(round((z0 - d) / (0.01 * s)))
-    if not heights:
-        diag["reason"] = "no collider hit by downward rays (scene has no colliders? try --add-colliders)"
-        return None, diag
-    floor_z = Counter(heights).most_common(1)[0][0] * 0.01 * s
+    if floor_z is None:
+        z0 = zmin + probe_h_m * s
+        heights = []
+        for x in xs:
+            for y in ys:
+                d = raycast((x, y, z0), down, 2.0 * probe_h_m * s)
+                if d is not None:
+                    heights.append(round((z0 - d) / (0.01 * s)))
+        if not heights:
+            diag["reason"] = ("no collider hit by downward rays near the bottom of the search bbox "
+                              "(no colliders? try --add-colliders; floor not at the bbox bottom? give --floor-z)")
+            return None, diag
+        floor_z = Counter(heights).most_common(1)[0][0] * 0.01 * s
+        diag["pass1_hits"] = len(heights)
     diag["floor_z"] = floor_z
-    diag["pass1_hits"] = len(heights)
 
     up = (0.0, 0.0, 1.0)
     dirs = _horizontal_dirs(n_dirs)

@@ -341,6 +341,9 @@ Bước 5  (chỉ khi bước 4 lỗi)    --hide-hdr, --add-dome-light, grscenes
 | Log có lỗi `DayMaterial.mdl`, nạp rất lâu | Chạy lại với `--hide-hdr`: tắt prim `/Root/__default_setting/HDR_Sphere` trong phiên chạy, file gốc không đổi (cách xử lý trong InternUtopia issue #30) |
 | T7g độ sáng thấp hoặc ảnh phẳng | `--add-dome-light` |
 | `SPAWN FAIL: no collider hit` | Cảnh không có collider. GRScenes: dùng `--variant navigation` (mặc định). Office: thử `--add-colliders`, hoặc `--ground-plane --floor-z 0` |
+| `SPAWN FAIL` và `scene bbox` rộng hàng trăm mét / `zmin` rất âm | Một mesh nền/phông kéo bbox ra xa sàn. Script đã bỏ mesh rộng hơn `--max-object-size` (50 m) khỏi `search bbox`; nếu vẫn lỗi: thêm `--floor-z Z` (bỏ qua bước dò sàn) và/hoặc `--search-region XMIN YMIN XMAX YMAX` |
+| `search area has ~N cells (> --max-cells ...)` | Vùng tìm quá rộng (mỗi ô 0.5 m cần nhiều raycast): khoanh lại bằng `--search-region` |
+| Terminal B chỉ thấy `clock=True`, các mục khác `False` | Phía Isaac in `ROBOT SKIPPED` (SPAWN FAIL): không có robot thì không có `/scan`, `/odom`, `/tf`, camera. Dừng cả hai bên, sửa SPAWN trước |
 | `SPAWN FAIL: no cell passed all checks` | Đọc dòng `rejected=...`; tự chọn điểm bằng `--livestream` rồi `--spawn X Y` |
 | T7b FAIL, robot rơi xuyên sàn | Sàn không có collider: `--add-colliders`; với GRScenes thử `grscenes-prep` |
 | T7a WARN metersPerUnit ≠ 1 hoặc upAxis ≠ Z | Robot (mét, trục Z lên) chưa được kiểm chứng trong cảnh đó; chọn cảnh khác |
