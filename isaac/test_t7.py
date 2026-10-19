@@ -305,6 +305,15 @@ if args.search_region:
 log("search bbox [m]: min=({:.2f}, {:.2f}, {:.2f}) max=({:.2f}, {:.2f}, {:.2f}){}".format(
     *[v * mpu for v in bb_min + bb_max], " (--search-region)" if args.search_region else ""))
 
+pre_coll = [p for p in stage.Traverse() if p.HasAPI(UsdPhysics.CollisionAPI)]
+for p in pre_coll[:10]:
+    approx = "-"
+    if p.HasAPI(UsdPhysics.MeshCollisionAPI):
+        a = UsdPhysics.MeshCollisionAPI(p).GetApproximationAttr().Get()
+        approx = str(a) if a else "-"
+    r = bbox_cache.ComputeWorldBound(p).ComputeAlignedRange()
+    zr = "" if r.IsEmpty() else f" z=[{r.GetMin()[2] * mpu:.2f}, {r.GetMax()[2] * mpu:.2f}] m"
+    log(f"     collider in file: {p.GetPath()} type={p.GetTypeName()} approximation={approx}{zr}")
 if args.add_colliders:
     added = 0
     for p in stage.Traverse():
@@ -614,6 +623,7 @@ ang_attr = og.Controller.attribute(f"{GRAPH}/SubTwist.outputs:angularVelocity") 
 drive_logged = drive_error_logged = False
 z_ref = None
 z_dev = 0.0
+xy_drift = 0.0
 stable_reported = fell_reported = False
 last_cmd = (0.0, 0.0)
 sim_start = world.current_time
@@ -654,10 +664,25 @@ while simulation_app.is_running() and time.time() - t0 < args.duration:
                 z_ref = z
             elif z_ref is not None:
                 z_dev = max(z_dev, abs(z - z_ref))
+            if not stable_reported:
+                # no command is sent before T7b is judged (check_t7.py holds the robot still), so any
+                # horizontal drift from the spawn point means the robot was pushed out of a collider
+                drift = float(np.hypot(p[0] - spawn["x"], p[1] - spawn["y"])) * mpu
+                xy_drift = max(xy_drift, drift)
             if not stable_reported and sim_t >= 5.0 and z_ref is not None:
-                ok_b = (z_ref >= floor_m - 0.05) and z_dev <= 0.05
+                height = z_ref - floor_m
+                ok_b = (-0.05 <= height <= 0.5) and z_dev <= 0.05 and xy_drift <= 0.2
+                why = []
+                if not -0.05 <= height <= 0.5:
+                    why.append(f"chassis {height:+.2f} m from the spawn floor (expected 0..0.5 m)")
+                if xy_drift > 0.2:
+                    why.append(f"moved {xy_drift:.2f} m from the spawn point without a command "
+                               "(spawned inside or under geometry and pushed out; check floor_z, try --floor-z)")
+                if z_dev > 0.05:
+                    why.append("chassis z still changing")
                 log(f"T7b STABLE {'PASS' if ok_b else 'FAIL'}: chassis z settled at {z_ref:.3f} m "
-                    f"(floor {floor_m:.3f} m), max deviation {z_dev:.3f} m over 2-5 s sim time")
+                    f"(spawn floor {floor_m:.3f} m), max z deviation {z_dev:.3f} m over 2-5 s sim time, "
+                    f"max xy drift {xy_drift:.3f} m" + ("" if ok_b else " -> " + "; ".join(why)))
                 stable_reported = True
             if not fell_reported and z < floor_m - 0.2:
                 log(f"T7b STABLE FAIL: robot fell through the floor (z={z:.3f} m, floor {floor_m:.3f} m)"

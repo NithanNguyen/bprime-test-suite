@@ -345,6 +345,7 @@ Bước 5  (chỉ khi bước 4 lỗi)    --hide-hdr, --add-dome-light, grscenes
 | `search area has ~N cells (> --max-cells ...)` | Vùng tìm quá rộng (mỗi ô 0.5 m cần nhiều raycast): khoanh lại bằng `--search-region` |
 | Terminal B chỉ thấy `clock=True`, các mục khác `False` | Phía Isaac in `ROBOT SKIPPED` (SPAWN FAIL): không có robot thì không có `/scan`, `/odom`, `/tf`, camera. Dừng cả hai bên, sửa SPAWN trước |
 | `SPAWN FAIL: no cell passed all checks` | Đọc dòng `rejected=...`; tự chọn điểm bằng `--livestream` rồi `--spawn X Y` |
+| T7b FAIL `moved X m from the spawn point without a command` | Robot được đặt bên trong/dưới hình học (ví dụ khoảng trống dưới sàn) và bị PhysX đẩy ra. Chỉ định sàn: `--floor-z Z` (Office: sàn thật ở z ≈ 0 theo lần chạy trên laptop) |
 | T7b FAIL, robot rơi xuyên sàn | Sàn không có collider: `--add-colliders`; với GRScenes thử `grscenes-prep` |
 | T7a WARN metersPerUnit ≠ 1 hoặc upAxis ≠ Z | Robot (mét, trục Z lên) chưa được kiểm chứng trong cảnh đó; chọn cảnh khác |
 | T7a FAIL hoặc lỗi vật lý với file navigation có sẵn | `./bprime.sh grscenes-prep <ID>`: tạo lại `start_result_navigation.usd` bằng Isaac Sim 4.1 với `preprocess.py -n` của InternUtopia. Bản gốc được giữ là `start_result_navigation.shipped.usd`. Cần clone InternUtopia vào `INTERNUTOPIA_DIR`. File mới thuộc user `root` |
