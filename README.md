@@ -33,7 +33,7 @@ Trạng thái: laptop (host 20.04) PASS T0–T6 · PC (host 22.04, driver 580) c
 
 | Có kiểm tra | Không kiểm tra |
 |---|---|
-| Image 4.1 có tải được và có thư viện Foxy nội bộ không | Hiệu năng của cảnh lớn, ví dụ GRScenes |
+| Image 4.1 có tải được và có thư viện Foxy nội bộ không | Hiệu năng của cảnh lớn, ví dụ GRScenes (nay thuộc T7, mục 11) |
 | Tiến trình Isaac nạp **đúng** backend Foxy, không ngầm chuyển sang Humble | Nav2, slam_toolbox (sẽ là bước tích hợp sau) |
 | DDS giữa hai container theo cả hai chiều | Mô hình robot thật của đề tài (bộ test dùng Jetbot thay thế) |
 | `/clock`, `/cmd_vel`, camera RGB + `camera_info` | Hiệu năng và độ đúng khi bật livestream (`--livestream` chỉ để **xem**, mục 4.5) |
@@ -63,11 +63,17 @@ bprime-test-suite/
 │   ├── inspect.sh          T2: kiểm tra nội dung image
 │   ├── bprime_app.py       Khởi động Kit: headless (mặc định) hoặc headless + livestream WebRTC
 │   ├── test_base.py        Graph /clock, /cmd_vel, camera; kiểm tra backend
-│   └── test_t6.py          Cảnh Jetbot + RTX LiDAR + odom/TF
-└── foxy/                   Chạy bên trong container Foxy
-    ├── check_base.sh       T3, T4, T5
-    ├── check_t6.py         T6a–T6f (đo bằng số liệu)
-    └── diag_scan.py        Chẩn đoán /scan và /point_cloud
+│   ├── test_t6.py          Cảnh Jetbot + RTX LiDAR + odom/TF
+│   ├── test_t7.py          T7: Jetbot + LiDAR + camera RGB trong căn hộ/Office (mục 11)
+│   └── grscenes_inventory.py  Thống kê diện tích sàn, loại vật thể của các cảnh GRScenes
+├── foxy/                   Chạy bên trong container Foxy
+│   ├── check_base.sh       T3, T4, T5
+│   ├── check_t6.py         T6a–T6f (đo bằng số liệu)
+│   ├── check_t7.py         T7c, T7g, T7h
+│   └── diag_scan.py        Chẩn đoán /scan và /point_cloud
+└── common/                 Dùng chung, không phụ thuộc Isaac/ROS
+    ├── t7_lib.py           Tìm điểm spawn bằng raycast, diện tích sàn, thống kê ảnh
+    └── test_t7_lib.py      Test đơn vị, chạy trên host: python3 common/test_t7_lib.py
 ```
 
 Thư mục bộ test được mount vào cả hai container ở chế độ **chỉ đọc**, tại `/bprime`. Mọi log được ghi ra host, mặc định ở `~/bprime_logs`.
@@ -243,3 +249,117 @@ Bộ test không cài và không sửa ROS/Gazebo trên host. Gỡ Docker và NV
 - Isaac Sim 4.2 – [Container Installation](https://docs.isaacsim.omniverse.nvidia.com/4.2.0/installation/install_container.html), [ROS 2 RTX Lidar](https://docs.isaacsim.omniverse.nvidia.com/4.2.0/ros2_tutorials/tutorial_ros2_rtx_lidar.html), [ROS 2 TF & Odometry](https://docs.isaacsim.omniverse.nvidia.com/4.2.0/ros2_tutorials/tutorial_ros2_tf.html), [Adding a Controller (Jetbot)](https://docs.isaacsim.omniverse.nvidia.com/4.2.0/core_api_tutorials/tutorial_core_adding_controller.html)
 - [Docker Engine – Install on Ubuntu](https://docs.docker.com/engine/install/ubuntu/) · [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 - [SLAMTEC RPLIDAR S2E datasheet v1.8](https://stgaws.robu.in/wp-content/uploads/2023/03/SLAMTEC_rplidar_datasheet_S2E_v1.8_en.pdf) · [REP 103](https://www.ros.org/reps/rep-0103.html)
+
+## 11. T7: robot trong căn hộ ảo (GRScenes-100) và Office
+
+T7 trả lời câu hỏi: **chuỗi B′ đã PASS T0–T6 có còn chạy được khi robot nằm trong một căn hộ nhiều phòng không?** Robot, LiDAR, odom/TF giống T6; T7 thêm camera RGB và thay hộp 4 m × 4 m bằng cảnh nạp từ file USD.
+
+### 11.1 Danh mục test và tiêu chí
+
+| ID | Kiểm tra | Bên | Đạt khi |
+| --- | --- | --- | --- |
+| T7a LOAD | Mở được cảnh, đợi nạp xong | Isaac + host | `T7a LOAD PASS` (metersPerUnit = 1, upAxis = Z). Host đếm số dòng `[Error]` và lỗi MDL |
+| T7f SEMANTICS | Có nhãn ngữ nghĩa, xuất danh sách vật thể | Isaac | `T7f SEMANTICS PASS`, file `t7_objects_<cảnh>.json`. Office có thể là `N/A` |
+| SPAWN | Tìm ô sàn trống trong nhà bằng raycast PhysX | Isaac | `SPAWN PASS` (hoặc tự chỉ định `--spawn X Y`) |
+| T7b STABLE | Robot đứng yên trên sàn của cảnh | Isaac | Chassis không thấp hơn sàn quá 5 cm, dao động ≤ 5 cm trong 2–5 s mô phỏng |
+| T7c SCAN / TF | `/scan` trong căn hộ; `/tf` đủ khung | Foxy | ≥ 80% tia hợp lệ (50–80% = WARN); đủ `odom→base_link`, `base_link→lidar_link` |
+| T7d VRAM | Đỉnh VRAM toàn GPU khi chạy | host | ≤ 90% VRAM (RTX 3060: ≈ 11 059 MiB); ≤ tổng − 200 MiB = WARN |
+| T7e RTF | Tỉ lệ thời gian mô phỏng / thời gian thực | Isaac | Chỉ để tham khảo; so với 0,47–0,59 của T6 |
+| T7g CAMERA | `/bprime/rgb` có tần số, kích thước, độ sáng hợp lý | Foxy | Tần số > 0, độ sáng trung bình 15–240, độ lệch chuẩn ≥ 5 |
+| T7h ROTATE | Quay tại chỗ ω = 0,5 rad/s trong 6 s | Foxy | Tỉ số đo/kỳ vọng 0,8–1,2 (như T6e) |
+| T7h FORWARD | Chạy thẳng v = 0,15 m/s trong 4 s, chỉ khi phía trước trống ≥ 0,8 m | Foxy | Tỉ số 0,8–1,2 (như T6d); `SKIPPED` không tính là lỗi |
+
+**Một cảnh dùng được** khi T7a, SPAWN, T7b, T7c, T7d, T7g và T7h ROTATE đều PASS. Các ngưỡng là đề xuất của bộ test, không lấy từ tài liệu NVIDIA; chỉnh trong `foxy/check_t7.py` và `bprime.sh` nếu cần.
+
+### 11.2 Lộ trình
+
+```
+Bước 1  Office (Isaac 4.1)      ./bprime.sh isaac t7 --scene office          → kiểm tra script T7, không cần tải gì
+Bước 2  Tải GRScenes-100 home   (mục 11.3, ~51 GB nén)
+Bước 3  Thống kê 69 cảnh        ./bprime.sh grscenes-inventory               → chọn 3–4 cảnh ứng viên
+Bước 4  T7 cho từng ứng viên    ./bprime.sh isaac t7 --scene <ID>            → giữ 2 cảnh PASS
+Bước 5  (chỉ khi bước 4 lỗi)    --hide-hdr, --add-dome-light, grscenes-prep  (mục 11.5)
+```
+
+### 11.3 Tải GRScenes-100 (một lần)
+
+1. **Điền User Agreement** của GRScenes-100 (Google Form, link trong README của InternUtopia). Giấy phép dữ liệu là CC BY-NC-SA 4.0.
+2. **Kiểm tra ổ trống.** Phần home gồm 3 file của một archive zip chia nhỏ: `home_scenes.zip` (8 GB), `home_scenes.z01` và `home_scenes.z02` (21,5 GB mỗi file), tổng ≈ 51 GB. Cần thêm ≈ 51 GB cho file gộp và dung lượng sau giải nén (chưa biết trước, xem ở bước 4). Chọn ổ còn ≥ 200 GB: `df -h`.
+3. **Tải** (ví dụ vào `/data/datasets/GRScenes`; thay bằng ổ của bạn):
+
+   ```bash
+   python3 -m pip install -U huggingface_hub
+   python3 - <<'PY'
+   from huggingface_hub import snapshot_download
+   snapshot_download(repo_id="InternRobotics/GRScenes", repo_type="dataset",
+                     allow_patterns=["scenes/GRScenes-100/home_scenes.*"],
+                     local_dir="/data/datasets/GRScenes")
+   PY
+   ```
+
+   Cũng có thể tải 3 file bằng trình duyệt ở trang `scenes/GRScenes-100` của dataset.
+4. **Gộp rồi giải nén.** Archive chia nhỏ phải gộp lại trước khi `unzip`:
+
+   ```bash
+   cd /data/datasets/GRScenes/scenes/GRScenes-100
+   zip -s 0 home_scenes.zip --out home_scenes_full.zip     # cần gói 'zip' (sudo apt install zip)
+   unzip -l home_scenes_full.zip | tail -1                  # tổng dung lượng sau giải nén
+   unzip -q home_scenes_full.zip -d /data/datasets/GRScenes/home
+   find /data/datasets/GRScenes/home -maxdepth 2 -name Materials   # tìm thư mục gốc của dữ liệu
+   ```
+
+   Giải nén xong và T7 chạy được thì có thể xóa `home_scenes.z0*` và `home_scenes_full.zip`.
+5. **Khai báo đường dẫn** trong `config/bprime.env`: `GRSCENES_ROOT` là thư mục **chứa** `Materials/`, `models/`, `scenes/` (dataset card gọi nó là `target_69_new`, tài liệu InternUtopia gọi là `home_scenes`; dùng kết quả lệnh `find` ở trên). Bộ test mount thư mục này **chỉ đọc** tại `/grscenes` và đặt `MDL_SYSTEM_PATH=/grscenes/Materials` bên trong container, như dataset card yêu cầu.
+
+### 11.4 Chạy
+
+```bash
+# Bước 1 - Office (không cần GRScenes)
+./bprime.sh isaac t7 --scene office                 # terminal A
+./bprime.sh foxy t7                                 # terminal B
+
+# Bước 3 - thống kê để chọn cảnh (chỉ đọc USD, không mô phỏng)
+./bprime.sh grscenes-inventory
+#   → ~/bprime_logs/grscenes_inventory.csv   (mỗi cảnh: diện tích sàn ước lượng, số vật thể, các loại)
+#   → ~/bprime_logs/grscenes_categories.csv  (mỗi loại vật thể xuất hiện trong bao nhiêu cảnh)
+
+# Bước 4 - từng cảnh ứng viên
+./bprime.sh isaac t7 --scene <SCENE_ID>             # ví dụ ID: MV7J6NIKTKJZ2AABAAAAADA8 (thư mục <ID>_usd)
+./bprime.sh foxy t7
+./bprime.sh isaac t7 --scene <SCENE_ID> --livestream --duration 1800   # xem bằng Chrome (chỉ để xem)
+```
+
+- Lần đầu mở một cảnh GRScenes có thể mất **15–20 phút** (tài liệu InternUtopia). Bên Foxy chờ tối đa 30 phút. Shader cache nằm trong `~/docker/isaac-sim-4.1`, các lần sau nhanh hơn.
+- Khi terminal A kết thúc (hết `--duration` hoặc Ctrl+C), `bprime.sh` in **T7d VRAM** và tóm tắt lỗi **T7a** (`~/bprime_logs/55_t7_host_summary.log`).
+- **Gợi ý chọn cảnh** (đề xuất, không bắt buộc): T7 PASS; có nhiều loại đồ vật nhỏ phù hợp kịch bản "Tìm giúp tôi…" (xem `grscenes_categories.csv`); diện tích sàn và số phòng ở mức một căn hộ; thời gian nạp và VRAM thấp. Giữ thêm một cảnh dự phòng.
+- File `t7_objects_<cảnh>.json` (nhãn, prim, tâm và kích thước hộp bao theo mét) dùng làm **ground truth** vị trí vật thể khi tính Success/SPL sau này.
+
+### 11.5 Xử lý sự cố T7
+
+| Triệu chứng | Cách xử lý (mỗi lần đổi một thứ) |
+| --- | --- |
+| Log có lỗi `DayMaterial.mdl`, nạp rất lâu | Chạy lại với `--hide-hdr`: tắt prim `/Root/__default_setting/HDR_Sphere` trong phiên chạy, file gốc không đổi (cách xử lý trong InternUtopia issue #30) |
+| T7g độ sáng thấp hoặc ảnh phẳng | `--add-dome-light` |
+| `SPAWN FAIL: no collider hit` | Cảnh không có collider. GRScenes: dùng `--variant navigation` (mặc định). Office: thử `--add-colliders`, hoặc `--ground-plane --floor-z 0` |
+| `SPAWN FAIL: no cell passed all checks` | Đọc dòng `rejected=...`; tự chọn điểm bằng `--livestream` rồi `--spawn X Y` |
+| T7b FAIL, robot rơi xuyên sàn | Sàn không có collider: `--add-colliders`; với GRScenes thử `grscenes-prep` |
+| T7a WARN metersPerUnit ≠ 1 hoặc upAxis ≠ Z | Robot (mét, trục Z lên) chưa được kiểm chứng trong cảnh đó; chọn cảnh khác |
+| T7a FAIL hoặc lỗi vật lý với file navigation có sẵn | `./bprime.sh grscenes-prep <ID>`: tạo lại `start_result_navigation.usd` bằng Isaac Sim 4.1 với `preprocess.py -n` của InternUtopia. Bản gốc được giữ là `start_result_navigation.shipped.usd`. Cần clone InternUtopia vào `INTERNUTOPIA_DIR`. File mới thuộc user `root` |
+| T7d WARN/FAIL (gần hết VRAM) | `--cam-res 424x240`, `--no-camera` để khoanh vùng; tắt ứng dụng dùng GPU khác |
+
+### 11.6 Ghi chú kỹ thuật
+
+- **Mở cảnh:** `open_stage()` của `omni.isaac.core`, giống `play_scene.py` của InternUtopia. Script dùng physics scene có sẵn trong file (GRScenes: `/Root/physicsScene`) và tắt UJITSO collision cooking như các script GRScenes.
+- **Tìm điểm spawn** (`common/t7_lib.py`): lưới 0,5 m trên hộp bao của cảnh. Một ô hợp lệ khi tia xuống chạm đúng mặt sàn (độ cao phổ biến nhất), tia lên chạm trần trong khoảng 1,5–5 m (trong nhà, không nằm dưới bàn/giường), và 32 tia ngang ở 0,10 m và 0,40 m không chạm vật nào trong 0,35 m. Chọn ô có nhiều ô lân cận hợp lệ nhất. Thuật toán đã test trên một ngôi nhà tổng hợp (`python3 common/test_t7_lib.py`), **chưa** test trong Isaac Sim.
+- **Camera:** gắn vào chassis, cách 0,06 m về phía trước và 0,12 m lên trên; HFOV mặc định 70°, 640×480. Camera USD nhìn theo −Z, trục +Y hướng lên; quaternion (w, x, y, z) = (0,5; 0,5; −0,5; −0,5) xoay nó để nhìn theo +X của robot, +Z hướng lên (đã kiểm bằng số). Chưa phát TF cho `camera_link`.
+- **Danh sách vật thể:** prim có thuộc tính `semantic:*:params:semanticData`; chỉ giữ prim cao nhất mang nhãn đó. Ở GRScenes nhãn có dạng `<loại>/<model>`, do `preprocess.py` gán.
+- **Diện tích sàn** trong inventory: hợp (union) các mặt nằm ngang của mesh loại `ground`/`floor`, raster lưới 0,1 m. Đây là ước lượng, có thể gồm cả ban công/sân nếu cảnh có.
+
+### 11.7 Tài liệu tham khảo cho T7
+
+- GRScenes dataset card (cấu trúc thư mục, 3 file USD mỗi cảnh, `MDL_SYSTEM_PATH`, giấy phép): https://huggingface.co/datasets/InternRobotics/GRScenes
+- InternUtopia README (User Agreement, nơi tải) và `toolkits/grscenes_scripts/{preprocess,play_scene,warmup}.py`: https://github.com/InternRobotics/InternUtopia
+- Tài liệu GRScenes-100 (tên file theo tác vụ, thời gian nạp 15–20 phút, lỗi MDL): https://internrobotics.github.io/user_guide/internutopia/get_started/dive-into-grscenes-100.html
+- InternUtopia issue #30 (lỗi `DayMaterial.mdl`, tắt `HDR_Sphere`): https://github.com/InternRobotics/InternUtopia/issues/30
+- Isaac Sim 4.1 Environment Assets (đường dẫn `Office/office.usd`): https://docs.isaacsim.omniverse.nvidia.com/4.1.0/features/environment_setup/assets/usd_assets_environments.html
+- `huggingface_hub` download guide: https://huggingface.co/docs/huggingface_hub/en/guides/download

@@ -42,6 +42,17 @@ Tests (terminal A = Isaac side, terminal B = Foxy side)
                          Both isaac base/t6 accept --livestream: view the scene in Chrome (WebRTC, port 8211)
   foxy  t6               B: T6a-T6f scan / odom / tf / motion checks
   foxy  scan             B: /scan vs /point_cloud diagnosis (optional)
+  isaac t7   [opts]      A: T6 robot + RGB camera inside an apartment/office scene (README section 11)
+                         opts: --scene office|<GRScenes id>|<usd> --variant navigation|raw --duration S
+                               --spawn X Y --floor-z Z --hide-hdr --add-dome-light --add-colliders
+                               --ground-plane --no-camera --cam-res WxH --cam-hfov DEG --pointcloud --livestream
+  foxy  t7   [--no-camera]  B: T7c scan/TF, T7g camera, T7h rotate/forward inside the scene
+
+GRScenes-100 (needs GRSCENES_ROOT in config/bprime.env)
+  grscenes-inventory [--ids ID ...] [--variant raw|navigation]
+                         Per-scene floor area, object categories -> ~/bprime_logs/grscenes_*.csv
+  grscenes-prep ID ...   Re-create start_result_navigation.usd with Isaac Sim 4.1 (InternUtopia
+                         preprocess.py -n); the shipped file is kept as start_result_navigation.shipped.usd
 
 Viewing (WebRTC livestream, open http://127.0.0.1:8211/streaming/webrtc-client?server=127.0.0.1)
   isaac stream           A: full Isaac Sim app (empty stage) streamed via runheadless.webrtc.sh
@@ -160,6 +171,56 @@ isaac_run_args() {
     -v "${BPRIME_LOG_DIR}:/bprime_logs:rw")
 }
 
+# GRScenes-100 dataset mounted at /grscenes (relative symlinks Materials/models inside each scene
+# folder keep working). MDL_SYSTEM_PATH points at its Materials folder, as the dataset card asks.
+have_grscenes() { [ -n "${GRSCENES_ROOT}" ] && [ -d "${GRSCENES_ROOT}/scenes" ]; }
+need_grscenes() {
+  have_grscenes || die "GRSCENES_ROOT='${GRSCENES_ROOT}' is not a folder with scenes/ inside. Set it in config/bprime.env (README section 11)."
+  [ -d "${GRSCENES_ROOT}/Materials" ] || echo "WARNING: ${GRSCENES_ROOT}/Materials not found - MDL materials will not resolve."
+}
+grscenes_mount() {   # $1 = ro | rw
+  ISAAC_ARGS+=(-v "${GRSCENES_ROOT}:/grscenes:${1}" -e MDL_SYSTEM_PATH=/grscenes/Materials)
+}
+
+# T7d: host-side VRAM sampling (1 Hz) while the Isaac container runs, plus a T7a error summary.
+VRAM_PID=""
+T7_REPORTED=""
+vram_start() {
+  local csv="$1"
+  : > "${csv}"
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits -lms 1000 >> "${csv}" 2>/dev/null &
+    VRAM_PID=$!
+  fi
+}
+t7_report() {
+  [ -n "${T7_REPORTED}" ] && return 0
+  T7_REPORTED=1
+  local csv="${BPRIME_LOG_DIR}/53_vram_t7.csv" log="${BPRIME_LOG_DIR}/50_isaac_t7.log"
+  if [ -n "${VRAM_PID}" ]; then kill "${VRAM_PID}" 2>/dev/null || true; wait "${VRAM_PID}" 2>/dev/null || true; fi
+  {
+    say "T7 host-side summary"
+    if [ -s "${csv}" ]; then
+      awk -F', *' 'NR==1{base=$1} {if($1+0>max)max=$1+0; tot=$2+0}
+        END{v=(max<=0.9*tot)?"PASS":((max<=tot-200)?"WARN":"FAIL");
+            printf "T7d VRAM %s: peak %d MiB of %d MiB (%.0f%%), before start %d MiB, Isaac adds ~%d MiB (samples: %d)\n",
+                   v, max, tot, 100*max/tot, base, max-base, NR}' "${csv}"
+    else
+      echo "T7d VRAM: no samples (nvidia-smi not found on the host?)"
+    fi
+    if [ -f "${log}" ]; then
+      local n_err n_mdl
+      n_err=$(grep -c '\[Error\]' "${log}" || true)
+      n_mdl=$(grep '\[Error\]' "${log}" | grep -ci 'mdl' || true)
+      echo "T7a log: ${n_err} [Error] lines, ${n_mdl} of them mention MDL (details: ${log})"
+      if [ "${n_err}" != "0" ]; then
+        echo "     most frequent errors:"
+        grep '\[Error\]' "${log}" | sed -E 's/^.*\[Error\]/[Error]/' | cut -c1-160 | sort | uniq -c | sort -rn | head -5
+      fi
+    fi
+  } | tee "${BPRIME_LOG_DIR}/55_t7_host_summary.log"
+}
+
 ensure_no_isaac() {
   if exists "${ISAAC_CONTAINER}"; then
     die "container ${ISAAC_CONTAINER} already exists (another test still running?). Stop it with: ./bprime.sh stop"
@@ -200,10 +261,16 @@ cmd_isaac() {
   case "${which}" in
     base) script=/bprime/isaac/test_base.py; log=20_isaac_base.log ;;
     t6)   script=/bprime/isaac/test_t6.py;   log=30_isaac_t6.log ;;
+    t7)   script=/bprime/isaac/test_t7.py;   log=50_isaac_t7.log ;;
     stream) cmd_isaac_stream; return ;;
-    *) die "usage: ./bprime.sh isaac base|t6|stream [options]" ;;
+    *) die "usage: ./bprime.sh isaac base|t6|t7|stream [options]" ;;
   esac
   need_docker; ensure_no_isaac; isaac_run_args
+  if [ "${which}" = "t7" ]; then
+    if have_grscenes; then grscenes_mount ro; echo "GRScenes mounted read-only: ${GRSCENES_ROOT} -> /grscenes"; fi
+    vram_start "${BPRIME_LOG_DIR}/53_vram_t7.csv"
+    trap t7_report EXIT
+  fi
   if [[ " $* " == *" --livestream "* ]]; then
     echo "Livestream on: when the log shows 'simulation playing', open in Chrome/Chromium:"
     echo "  ${STREAM_URL}   (press the red Play button; one viewer at a time)"
@@ -228,13 +295,47 @@ cmd_foxy() {
   case "${which}" in
     base) inner='bash /bprime/foxy/check_base.sh'; log=21_foxy_base.log ;;
     t6)   inner='ros2 daemon stop >/dev/null 2>&1 || true; python3 /bprime/foxy/check_t6.py'; log=31_foxy_t6.log ;;
+    t7)   local extra=""
+          [ "${2:-}" = "--no-camera" ] && extra=" --no-camera"
+          inner="ros2 daemon stop >/dev/null 2>&1 || true; python3 /bprime/foxy/check_t7.py${extra}"; log=51_foxy_t7.log ;;
     scan) inner='python3 /bprime/foxy/diag_scan.py'; log=32_foxy_scan.log ;;
-    *) die "usage: ./bprime.sh foxy base|t6|scan" ;;
+    *) die "usage: ./bprime.sh foxy base|t6|t7|scan" ;;
   esac
   ensure_foxy
   say "Foxy side '${which}' (log: ${BPRIME_LOG_DIR}/${log}). Waits for the Isaac side automatically."
   docker exec "${FOXY_CONTAINER}" bash -c "set +u; source /opt/ros/foxy/setup.bash; set -u; export PYTHONUNBUFFERED=1; ${inner}" \
     2>&1 | tee "${BPRIME_LOG_DIR}/${log}"
+}
+
+cmd_grscenes_inventory() {
+  need_grscenes; need_docker; ensure_no_isaac; isaac_run_args; grscenes_mount ro
+  say "GRScenes inventory (log: ${BPRIME_LOG_DIR}/52_grscenes_inventory.log). Results: ${BPRIME_LOG_DIR}/grscenes_*.csv"
+  docker run -it "${ISAAC_ARGS[@]}" "${ISAAC_IMAGE}" -c \
+    'source /bprime/isaac/env.sh && cd /isaac-sim && ./python.sh "$0" "$@" 2>&1 | tee /bprime_logs/52_grscenes_inventory.log' \
+    /bprime/isaac/grscenes_inventory.py "$@"
+}
+
+cmd_grscenes_prep() {
+  [ $# -ge 1 ] || die "usage: ./bprime.sh grscenes-prep <scene_id> [<scene_id> ...]"
+  need_grscenes
+  local tool="${INTERNUTOPIA_DIR}/toolkits/grscenes_scripts/preprocess.py"
+  [ -f "${tool}" ] || die "${tool} not found. Clone it once: git clone --depth 1 https://github.com/InternRobotics/InternUtopia ${INTERNUTOPIA_DIR}"
+  local files=() id d
+  for id in "$@"; do
+    id="${id%_usd}"; d="${GRSCENES_ROOT}/scenes/${id}_usd"
+    [ -f "${d}/start_result_raw.usd" ] || die "${d}/start_result_raw.usd not found"
+    if [ -f "${d}/start_result_navigation.usd" ] && [ ! -f "${d}/start_result_navigation.shipped.usd" ]; then
+      cp -p "${d}/start_result_navigation.usd" "${d}/start_result_navigation.shipped.usd"
+      echo "backup: ${d}/start_result_navigation.shipped.usd"
+    fi
+    files+=("/grscenes/scenes/${id}_usd/start_result_raw.usd")
+  done
+  need_docker; ensure_no_isaac; isaac_run_args; grscenes_mount rw
+  ISAAC_ARGS+=(-v "$(dirname "${tool}"):/grscenes_scripts:ro")
+  say "Preprocess for navigation with Isaac Sim 4.1 (log: ${BPRIME_LOG_DIR}/54_grscenes_prep.log)"
+  docker run -it "${ISAAC_ARGS[@]}" "${ISAAC_IMAGE}" -c \
+    'source /bprime/isaac/env.sh && cd /isaac-sim && { ./python.sh -c "import tqdm" 2>/dev/null || ./python.sh -m pip install tqdm; } && ./python.sh /grscenes_scripts/preprocess.py -n -f "$@" 2>&1 | tee /bprime_logs/54_grscenes_prep.log' \
+    _ "${files[@]}"
 }
 
 cmd_shell() {
@@ -285,6 +386,8 @@ case "${1:-help}" in
   isaac)           shift; cmd_isaac "$@" ;;
   foxy)            shift; cmd_foxy "$@" ;;
   shell)           shift; cmd_shell "$@" ;;
+  grscenes-inventory) shift; cmd_grscenes_inventory "$@" ;;
+  grscenes-prep)   shift; cmd_grscenes_prep "$@" ;;
   collect)         cmd_collect ;;
   stop)            cmd_stop ;;
   help|-h|--help)  usage ;;
