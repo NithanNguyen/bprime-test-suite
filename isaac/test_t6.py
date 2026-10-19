@@ -36,6 +36,8 @@ parser.add_argument("--lidar-config", default="RPLIDAR_S2E",
                     help="RTX lidar config name (file stem). Default RPLIDAR_S2E (the robot's real lidar). "
                          "'auto' = first 2D-looking config, else Example_Rotary")
 parser.add_argument("--no-pointcloud", action="store_true", help="do not publish /point_cloud")
+parser.add_argument("--livestream", action="store_true",
+                    help="stream the viewport via WebRTC on port 8211 (viewing only)")
 args, _unknown = parser.parse_known_args()
 
 TAG = "[B']"
@@ -60,9 +62,31 @@ try:
 except ImportError:  # pragma: no cover
     from omni.isaac.kit import SimulationApp
 
-simulation_app = SimulationApp({"headless": True})
+# simulation_app = SimulationApp({"headless": True})
+
+# from omni.isaac.core.utils.extensions import enable_extension  # noqa: E402
+
+if args.livestream:
+    # Config copied from /isaac-sim/standalone_examples/api/omni.isaac.kit/livestream.py (Isaac Sim 4.1)
+    simulation_app = SimulationApp({
+        "width": 1280, "height": 720,
+        "window_width": 1280, "window_height": 720,   # ví dụ gốc dùng 1920x1080; giảm để tiết kiệm VRAM 4 GB
+        "headless": True,
+        "hide_ui": False,
+        "renderer": "RayTracedLighting",
+        "display_options": 3286,
+    })
+else:
+    simulation_app = SimulationApp({"headless": True})
 
 from omni.isaac.core.utils.extensions import enable_extension  # noqa: E402
+
+if args.livestream:
+    simulation_app.set_setting("/app/window/drawMouse", True)
+    simulation_app.set_setting("/app/livestream/proto", "ws")
+    simulation_app.set_setting("/ngx/enabled", False)
+    enable_extension("omni.services.streamclient.webrtc")   # chỉ bật MỘT extension livestream
+    log("LIVESTREAM: http://127.0.0.1:8211/streaming/webrtc-client?server=127.0.0.1")
 
 for ext in ("omni.isaac.ros2_bridge", "omni.isaac.sensor", "omni.isaac.wheeled_robots"):
     try:
