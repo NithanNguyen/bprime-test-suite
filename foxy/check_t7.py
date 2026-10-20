@@ -143,7 +143,7 @@ def main():
         verdict = "PASS" if ratio >= 0.8 else ("WARN" if ratio >= 0.5 else "FAIL")
         print(f"T7c SCAN {verdict}: beams={len(s.ranges)} valid={len(valid)} ({100 * ratio:.0f}%) "
               f"min={min(valid) if valid else float('nan'):.2f} m max={max(valid) if valid else float('nan'):.2f} m")
-        print("     note: T6 already showed ~11% of beams at -1.0 on an empty box (README section 7)")
+        print("     note: T6 already showed ~11% of beams at -1.0 on an empty box (README section 8)")
     need = {("odom", "base_link"), ("base_link", "lidar_link")}
     missing = need - n.tf_pairs
     print(f"T7c TF {'PASS' if not missing else 'FAIL'}: missing={sorted(missing)}")

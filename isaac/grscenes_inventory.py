@@ -8,7 +8,8 @@ Per scene it reports: metersPerUnit, upAxis, number of object models, number of 
 an estimate of the walkable floor area (union of horizontal faces of the 'ground'/'floor' meshes,
 rasterised on a 0.1 m grid) and the floor bounding box. Category names are read from the prim
 paths /Root/Meshes/<scope>/<category>/<model>, the layout used by InternUtopia's
-toolkits/grscenes_scripts/preprocess.py.
+toolkits/grscenes_scripts/preprocess.py. The floor area needs the scene's 'ground' model folders
+to be extracted (grscenes-select extract does that); otherwise it is reported as nan.
 
 Outputs (host folder ~/bprime_logs):
   grscenes_inventory.csv     one row per scene
@@ -88,6 +89,10 @@ def scene_dirs():
     if args.ids:
         wanted = {i[:-4] if i.endswith("_usd") else i for i in args.ids}
         dirs = [d for d in dirs if os.path.basename(d)[:-4] in wanted]
+        unknown = sorted(wanted - {os.path.basename(d)[:-4] for d in dirs})
+        if unknown:
+            log(f"WARNING: no folder <id>_usd under {args.root} for id(s) {unknown} "
+                "(placeholder or typo? use the ids printed by ./bprime.sh grscenes-select plan)")
     return dirs
 
 

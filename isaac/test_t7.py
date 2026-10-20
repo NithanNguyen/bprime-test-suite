@@ -60,7 +60,7 @@ WHEEL_RADIUS, WHEEL_BASE = 0.03, 0.1125      # Jetbot values from the Isaac Sim 
 LIDAR_OFFSET_M = (0.0, 0.0, 0.15)            # lidar relative to the chassis prim [m] (as T6)
 CAM_OFFSET_M = (0.06, 0.0, 0.12)             # camera relative to the chassis prim [m]
 # USD cameras look along -Z with +Y up. This quaternion (w, x, y, z) turns them to look along the
-# chassis +X with +Z up: camera -Z -> +X, camera +Y -> +Z (checked numerically, see README T7).
+# chassis +X with +Z up: camera -Z -> +X, camera +Y -> +Z (checked numerically, see README section 10).
 CAM_ORIENT = (0.5, 0.5, -0.5, -0.5)
 GRSCENES_MOUNT = "/grscenes"
 HDR_PRIM = "/Root/__default_setting/HDR_Sphere"   # from InternUtopia issue #30
@@ -204,7 +204,8 @@ for p in stage.Traverse():
 verdict = "PASS" if (abs(mpu - 1.0) < 1e-6 and up_axis == "Z") else "WARN"
 log(f"T7a LOAD {verdict}: {load_s:.1f} s, metersPerUnit={mpu}, upAxis={up_axis}, prims={n_prims}, meshes={n_meshes}")
 if verdict == "WARN":
-    log("     WARN: the robot asset is authored in metres with Z up; scaling/orientation in this scene is unverified")
+    log("     WARN: stage is not in metres/Z-up (GRScenes homes: metersPerUnit=0.01). Positions are converted "
+        "with metersPerUnit; T7b and T7h show whether the robot behaves at the right scale")
 if args.add_dome_light:
     light = UsdLux.DomeLight.Define(stage, "/World/T7DomeLight")
     light.CreateIntensityAttr(1000.0)

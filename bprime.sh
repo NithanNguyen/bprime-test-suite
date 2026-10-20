@@ -42,14 +42,19 @@ Tests (terminal A = Isaac side, terminal B = Foxy side)
                          Both isaac base/t6 accept --livestream: view the scene in Chrome (WebRTC, port 8211)
   foxy  t6               B: T6a-T6f scan / odom / tf / motion checks
   foxy  scan             B: /scan vs /point_cloud diagnosis (optional)
-  isaac t7   [opts]      A: T6 robot + RGB camera inside an apartment/office scene (README section 11)
+  isaac t7   [opts]      A: T6 robot + RGB camera inside an apartment/office scene (README section 5.2)
                          opts: --scene office|<GRScenes id>|<usd> --variant navigation|raw --duration S
                                --spawn X Y --floor-z Z --hide-hdr --add-dome-light --add-colliders
                                --ground-plane --no-camera --cam-res WxH --cam-hfov DEG --pointcloud --livestream
   foxy  t7   [--no-camera]  B: T7c scan/TF, T7g camera, T7h rotate/forward inside the scene
 
-GRScenes-100 (needs GRSCENES_ROOT in config/bprime.env)
-  grscenes-inventory [--ids ID ...] [--variant raw|navigation]
+GRScenes-100 (README section 6)
+  grscenes-select plan --zip ZIP [--targets a,b,..]
+                         Host, reads the merged zip only: per-scene model size + target categories
+                         -> ~/bprime_logs/grscenes_plan.csv
+  grscenes-select extract --zip ZIP --dest DIR --ids ID ...
+                         Host: extract Materials/ + chosen scenes + only the models they reference
+  grscenes-inventory [--ids ID ...] [--variant raw|navigation]   (needs GRSCENES_ROOT)
                          Per-scene floor area, object categories -> ~/bprime_logs/grscenes_*.csv
   grscenes-prep ID ...   Re-create start_result_navigation.usd with Isaac Sim 4.1 (InternUtopia
                          preprocess.py -n); the shipped file is kept as start_result_navigation.shipped.usd
@@ -175,7 +180,7 @@ isaac_run_args() {
 # folder keep working). MDL_SYSTEM_PATH points at its Materials folder, as the dataset card asks.
 have_grscenes() { [ -n "${GRSCENES_ROOT}" ] && [ -d "${GRSCENES_ROOT}/scenes" ]; }
 need_grscenes() {
-  have_grscenes || die "GRSCENES_ROOT='${GRSCENES_ROOT}' is not a folder with scenes/ inside. Set it in config/bprime.env (README section 11)."
+  have_grscenes || die "GRSCENES_ROOT='${GRSCENES_ROOT}' is not a folder with scenes/ inside. Set it in config/bprime.env or export it (README section 6)."
   [ -d "${GRSCENES_ROOT}/Materials" ] || echo "WARNING: ${GRSCENES_ROOT}/Materials not found - MDL materials will not resolve."
 }
 grscenes_mount() {   # $1 = ro | rw
@@ -196,15 +201,19 @@ vram_start() {
 t7_report() {
   [ -n "${T7_REPORTED}" ] && return 0
   T7_REPORTED=1
-  local csv="${BPRIME_LOG_DIR}/53_vram_t7.csv" log="${BPRIME_LOG_DIR}/50_isaac_t7.log"
+  local csv="${BPRIME_LOG_DIR}/53_vram_t7.csv" log="${BPRIME_LOG_DIR}/50_isaac_t7.log" n_oom=0
   if [ -n "${VRAM_PID}" ]; then kill "${VRAM_PID}" 2>/dev/null || true; wait "${VRAM_PID}" 2>/dev/null || true; fi
+  # The sampled peak cannot exceed the card's memory, so a run that ran OUT of VRAM can still look like
+  # "92 %". Vulkan out-of-memory errors in the Isaac log are the direct evidence and force FAIL.
+  [ -f "${log}" ] && n_oom=$(grep -c 'ERROR_OUT_OF_DEVICE_MEMORY' "${log}" || true)
   {
     say "T7 host-side summary"
     if [ -s "${csv}" ]; then
-      awk -F', *' 'NR==1{base=$1} {if($1+0>max)max=$1+0; tot=$2+0}
-        END{v=(max<=0.9*tot)?"PASS":((max<=tot-200)?"WARN":"FAIL");
+      awk -F', *' -v oom="${n_oom}" 'NR==1{base=$1} {if($1+0>max)max=$1+0; tot=$2+0}
+        END{v=(oom>0)?"FAIL":((max<=0.9*tot)?"PASS":((max<=tot-200)?"WARN":"FAIL"));
             printf "T7d VRAM %s: peak %d MiB of %d MiB (%.0f%%), before start %d MiB, Isaac adds ~%d MiB (samples: %d)\n",
-                   v, max, tot, 100*max/tot, base, max-base, NR}' "${csv}"
+                   v, max, tot, 100*max/tot, base, max-base, NR;
+            if(oom>0) printf "     %d Vulkan ERROR_OUT_OF_DEVICE_MEMORY lines in the Isaac log: this GPU has too little VRAM for the scene (README section 7)\n", oom}' "${csv}"
     else
       echo "T7d VRAM: no samples (nvidia-smi not found on the host?)"
     fi
@@ -219,6 +228,23 @@ t7_report() {
       fi
     fi
   } | tee "${BPRIME_LOG_DIR}/55_t7_host_summary.log"
+}
+
+# Isaac Sim 4.1 lists 8 GB VRAM as the minimum. A GRScenes home scene ran out of VRAM on a 4 GB
+# laptop GPU even with --no-camera --hide-hdr (README section 7), so warn before a non-Office T7 run.
+warn_low_vram() {
+  local scene="office" prev="" a total
+  for a in "$@"; do
+    case "${a}" in --scene=*) scene="${a#--scene=}" ;; esac
+    [ "${prev}" = "--scene" ] && scene="${a}"
+    prev="${a}"
+  done
+  [ "${scene,,}" = "office" ] && return 0
+  total=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -dc '0-9' || true)
+  if [ -n "${total}" ] && [ "${total}" -lt 8000 ]; then
+    printf '\033[33mWARNING:\033[0m this GPU has %s MiB VRAM (< 8 GB, the Isaac Sim minimum). A GRScenes scene is\n' "${total}"
+    echo "         expected to fail with ERROR_OUT_OF_DEVICE_MEMORY, as on the 4 GB laptop (README section 7)."
+  fi
 }
 
 ensure_no_isaac() {
@@ -268,6 +294,7 @@ cmd_isaac() {
   need_docker; ensure_no_isaac; isaac_run_args
   if [ "${which}" = "t7" ]; then
     if have_grscenes; then grscenes_mount ro; echo "GRScenes mounted read-only: ${GRSCENES_ROOT} -> /grscenes"; fi
+    warn_low_vram "$@"
     vram_start "${BPRIME_LOG_DIR}/53_vram_t7.csv"
     trap t7_report EXIT
   fi
@@ -313,6 +340,11 @@ cmd_grscenes_inventory() {
   docker run -it "${ISAAC_ARGS[@]}" "${ISAAC_IMAGE}" -c \
     'source /bprime/isaac/env.sh && cd /isaac-sim && ./python.sh "$0" "$@" 2>&1 | tee /bprime_logs/52_grscenes_inventory.log' \
     /bprime/isaac/grscenes_inventory.py "$@"
+}
+
+cmd_grscenes_select() {
+  command -v python3 >/dev/null 2>&1 || die "python3 not found on the host"
+  python3 "${HERE}/host/grscenes_select.py" --log-dir "${BPRIME_LOG_DIR}" "$@"
 }
 
 cmd_grscenes_prep() {
@@ -386,6 +418,7 @@ case "${1:-help}" in
   isaac)           shift; cmd_isaac "$@" ;;
   foxy)            shift; cmd_foxy "$@" ;;
   shell)           shift; cmd_shell "$@" ;;
+  grscenes-select) shift; cmd_grscenes_select "$@" ;;
   grscenes-inventory) shift; cmd_grscenes_inventory "$@" ;;
   grscenes-prep)   shift; cmd_grscenes_prep "$@" ;;
   collect)         cmd_collect ;;
