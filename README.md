@@ -1,3 +1,11 @@
+<p align="center">
+  <a href="https://youtu.be/mAhwO3A6mZg">
+    <img src="https://img.youtube.com/vi/mAhwO3A6mZg/maxresdefault.jpg" alt="Video demo trên YouTube" width="720">
+  </a>
+  <br>
+  <sub>▶ Xem video trên YouTube: <a href="https://youtu.be/mAhwO3A6mZg">https://youtu.be/mAhwO3A6mZg</a></sub>
+</p>
+
 # B' Test Suite: Isaac Sim 4.1 ↔ ROS 2 Foxy (container)
 
 Bộ kiểm thử cấu hình mô phỏng **B'** cho đề tài robot Object Goal Navigation hỗ trợ người cao tuổi. Câu hỏi cần trả lời:
