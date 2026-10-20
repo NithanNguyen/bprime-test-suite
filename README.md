@@ -1,6 +1,6 @@
-# Test Suite: Isaac Sim 4.1 ↔ ROS 2 Foxy (container)
+# B' Test Suite: Isaac Sim 4.1 ↔ ROS 2 Foxy (container)
 
-Bộ kiểm thử cấu hình mô phỏng cho đề tài robot Object Goal Navigation hỗ trợ người cao tuổi. Câu hỏi cần trả lời:
+Bộ kiểm thử cấu hình mô phỏng **B'** cho đề tài robot Object Goal Navigation hỗ trợ người cao tuổi. Câu hỏi cần trả lời:
 
 > Trên một máy cụ thể, Isaac Sim 4.1 (dùng thư viện ROS 2 Foxy **nội bộ**) có trao đổi đủ dữ liệu với một container ROS 2 Foxy không, kể cả khi robot nằm trong một căn hộ ảo?
 
